@@ -1,0 +1,20 @@
+[package]
+name = "lc-help-backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework and async runtime
+axum = "0.7.5"
+tokio = { version = "1.37", features = ["full"] }
+
+# Serialization for our JSON schemas
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database driver for PostgreSQL
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "json"] }
+
+# CORS to allow our Next.js frontend to talk to this backend
+tower-http = { version = "0.5", features = ["cors"] }
+dotenvy = "0.15"
