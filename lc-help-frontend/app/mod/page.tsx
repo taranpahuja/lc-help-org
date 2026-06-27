@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import ModeratorDashboard from "../components/ModeratorDashboard";
+import ModeratorDashboard from "../../components/ModeratorDashboard"; // Fixed Path!
 
 export default function ModPage() {
   return (
