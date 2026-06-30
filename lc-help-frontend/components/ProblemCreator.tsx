@@ -46,6 +46,10 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+// 🎯 WASM ENGINE IMPORT
+// 🎯 WASM ENGINE IMPORT
+import initWasm, { execute_dry_run } from "../wasm/lc_animation_engine.js";
+
 // --- CUSTOM NODES ---
 
 const ArrayNode = ({ data, selected }: any) => (
@@ -138,11 +142,8 @@ interface CreatorStep {
   edgesSnapshot: Edge[];
 }
 
-// We remove the global ReactFlowProvider so each canvas gets its own isolated brain.
 export default function ProblemCreator() {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
-
-  // We capture the exact instance of the MAIN editor to do camera math
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
 
   const [title, setTitle] = useState("Find the Target Element");
@@ -167,8 +168,6 @@ export default function ProblemCreator() {
     "select",
   );
   const [edgeType, setEdgeType] = useState<"default" | "straight">("default");
-
-  // Snap Tracking
   const [isAltPressed, setIsAltPressed] = useState(false);
 
   // Context Menu
@@ -188,18 +187,33 @@ export default function ProblemCreator() {
   const setActiveSteps =
     activeTab === "problem" ? setProblemSteps : setSolutionSteps;
 
-  // The Magic Math: Finds the true center of the main camera regardless of zoom/pan
+  // 🎯 WASM ENGINE STATES
+  const [isEngineReady, setIsEngineReady] = useState(false);
+  const [userScript, setUserScript] = useState("start_bfs(Node A);");
+  const [showCodeEditor, setShowCodeEditor] = useState(false);
+
+  // 🎯 BOOT WASM ENGINE ON MOUNT
+  useEffect(() => {
+    async function loadEngine() {
+      try {
+        await initWasm();
+        setIsEngineReady(true);
+      } catch (err) {
+        console.error("Failed to load Wasm Engine:", err);
+      }
+    }
+    loadEngine();
+  }, []);
+
   const getSpawnPosition = () => {
     if (!rfInstance || !reactFlowWrapper.current) return { x: 100, y: 100 };
     const bounds = reactFlowWrapper.current.getBoundingClientRect();
-    // Use the specific instance of the main editor to calculate position
     return rfInstance.screenToFlowPosition({
       x: bounds.left + bounds.width / 2,
       y: bounds.top + bounds.height / 2,
     });
   };
 
-  // Keyboard Listeners for Alt key (Free movement)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Alt") setIsAltPressed(true);
@@ -215,7 +229,6 @@ export default function ProblemCreator() {
     };
   }, []);
 
-  // Playback engine
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isPlaying && activeSteps.length > 0) {
@@ -363,6 +376,65 @@ export default function ProblemCreator() {
     setPreviewStepIndex(activeSteps.length);
   };
 
+  // 🎯 WASM COMPILE TO TIMELINE
+  const handleCompileScript = () => {
+    if (!isEngineReady) return;
+
+    try {
+      const jsonResult = execute_dry_run(userScript);
+      const generatedFrames = JSON.parse(jsonResult);
+
+      const spawnPos = getSpawnPosition();
+
+      const mappedSteps: CreatorStep[] = generatedFrames.map((frame: any) => ({
+        stepNumber: frame.step + 1,
+        explanation: frame.description,
+        nodesSnapshot: frame.nodes.map((n: any, i: number) => ({
+          id: n.id,
+          position: { x: spawnPos.x + i * 80, y: spawnPos.y }, // Spread them out slightly
+          data: { label: n.id },
+          type: "textNode",
+          style: {
+            background:
+              n.status === "visited"
+                ? "#f0fdf4"
+                : n.status === "queued"
+                  ? "#eff6ff"
+                  : "#ffffff",
+            color:
+              n.status === "visited"
+                ? "#15803d"
+                : n.status === "queued"
+                  ? "#1d4ed8"
+                  : "#111827",
+            borderColor:
+              n.status === "visited"
+                ? "#bbf7d0"
+                : n.status === "queued"
+                  ? "#bfdbfe"
+                  : "#e5e7eb",
+            border: "2px solid",
+            borderRadius: "8px",
+            fontWeight: "bold",
+            width: 60,
+            height: 60,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "move",
+          },
+        })),
+        edgesSnapshot: [],
+      }));
+
+      setActiveSteps(mappedSteps);
+      setPreviewStepIndex(0);
+    } catch (err) {
+      console.error("Compilation failed:", err);
+      alert("Script compilation failed. Check console for details.");
+    }
+  };
+
   const removeStep = (index: number) => {
     setActiveSteps(
       activeSteps
@@ -415,12 +487,8 @@ export default function ProblemCreator() {
 
   return (
     <div className="min-h-screen w-full bg-gray-50 flex flex-col gap-10 p-6 lg:p-10 pb-32 max-w-screen-2xl mx-auto">
-      {/* Global CSS Overrides */}
       <style>{`
-        /* Kills preview dots */
         .preview-player .react-flow__handle { display: none !important; }
-
-        /* Kills the group bounding box when multiple items are selected */
         .react-flow__nodesselection-rect { display: none !important; }
       `}</style>
 
@@ -805,6 +873,50 @@ export default function ProblemCreator() {
           />
         </div>
 
+        {/* 🎯 WASM SCRIPT ENGINE TOGGLE */}
+        <div className="flex justify-end mt-2">
+          <button
+            onClick={() => setShowCodeEditor(!showCodeEditor)}
+            className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold shadow hover:bg-slate-800 transition-colors flex items-center gap-2"
+          >
+            <Code2 size={18} />
+            {showCodeEditor
+              ? "Hide Script Engine"
+              : "Open Script Engine (Wasm)"}
+          </button>
+        </div>
+
+        {/* 🎯 WASM EDITOR PANEL */}
+        {showCodeEditor && (
+          <div className="flex flex-col gap-3 p-5 mt-2 bg-slate-100 rounded-2xl border border-slate-300 shadow-inner">
+            <div className="flex justify-between items-center">
+              <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">
+                Algorithm Script Editor
+              </span>
+              <span
+                className={`px-3 py-1 rounded-full text-xs font-bold ${isEngineReady ? "bg-emerald-200 text-emerald-800" : "bg-red-200 text-red-800"}`}
+              >
+                {isEngineReady ? "Engine Ready" : "Booting..."}
+              </span>
+            </div>
+            <div className="flex flex-col lg:flex-row gap-4">
+              <textarea
+                value={userScript}
+                onChange={(e) => setUserScript(e.target.value)}
+                placeholder="Write traversal script here... e.g. start_bfs();"
+                className="flex-grow h-40 p-4 bg-slate-900 text-emerald-400 font-mono rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm shadow-inner"
+              />
+              <button
+                onClick={handleCompileScript}
+                disabled={!isEngineReady}
+                className="lg:w-48 px-6 py-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-xl transition-colors flex items-center justify-center text-center shadow-md"
+              >
+                Compile to Timeline
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex bg-gray-100 p-1.5 rounded-xl border border-gray-200 w-full lg:w-1/2">
           <button
             onClick={() => {
@@ -971,7 +1083,7 @@ export default function ProblemCreator() {
 
       {/* SECTION 3: PREVIEW & TIMELINE */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-10 min-h-[600px] w-full">
-        {/* Left: Preview Player (Takes up more space now) */}
+        {/* Left: Preview Player */}
         <div className="lg:col-span-3 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
           <div className="bg-gray-50 border-b border-gray-200 px-8 py-5">
             <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
